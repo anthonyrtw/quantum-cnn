@@ -39,8 +39,12 @@ class OneHotAmplitude(Encoder):
     def forward(self, qdev, X):
         if qdev.n_wires != sum(self._dims):
             raise ValueError('Quantum Device does not match image dimensions.')
+                
+        if len(X.shape) != 3:
+            X = X.unsqueeze(0)
         
         # Normalize image
+        X = X.to(dtype=torch.complex64)
         norm = torch.sqrt(torch.square(X).sum(dim=(1, 2)))
         X = X / norm.view(-1, 1, 1)
 
@@ -49,7 +53,11 @@ class OneHotAmplitude(Encoder):
 
         # Encode image in amplitudes of each basis states
         X_state = torch.sum(self._basis_states.unsqueeze(0) * X_flat.unsqueeze(2), dim=1)
+
         qdev.set_states(X_state)
+
+    def __repr__(self):
+        return f'OneHotAmplitude({self._dims[0]}, {self._dims[1]})'
 
 
 class RBS(QuantumModule):
@@ -89,6 +97,12 @@ class RBS(QuantumModule):
                     [0, 0, 0, 1]]
         )
 
+    def __repr__(self):
+        if self._wires is not None:
+            return f'RBS(wires=[{self._wires[0]}, {self._wires[1]}])'
+        else:
+            return 'RBS'
+
 class Conv2dFilter(QuantumModule):
     """ 
     2D Convolutional filter applied to a register within a convolutional layer.
@@ -120,6 +134,9 @@ class Conv2dFilter(QuantumModule):
 
         for i, rbs in enumerate(self._rbs_list):
             rbs(qdev)
+
+    def __repr__(self):
+        return f'Conv2dFilter(kernel_size={self._kernel_size})'
 
 
 class Conv2d(QuantumModule):
@@ -159,6 +176,9 @@ class Conv2d(QuantumModule):
         
         for wire in self._start_wires_y:
             self._filterY(qdev, start_wire=wire)
+
+    def __repr__(self):
+        return f'Conv2d(dims={self._dims}, kernel_size={self._kernel_size}, stride={self._stride})'
 
 
 class Pooling(QuantumModule):
@@ -216,6 +236,9 @@ class Pooling(QuantumModule):
             params=torch.tensor(self._perm_u)
         )
 
+    def __repr__(self):
+        return f'Pooling(dims={self._dims}, kernel_size={self._kernel_size})'
+
 
 class PyramidDense(QuantumModule):
     """ 
@@ -228,14 +251,21 @@ class PyramidDense(QuantumModule):
     def __init__(self, n_wires: int):
         super().__init__() 
 
-        half_pyramid = [
-            [[2 * i, 2 * i + 1] for i in range(col - 1)] +
-            [[2 * i + 1, 2 * i + 2] for i in range(col - 1)]
-            for col in range(2, n_wires - 1)
-        ]
-        self._rbs_list = [RBS(wires=wires) for wires_list in half_pyramid for wires in wires_list]
-        self._rbs_list += [RBS(wires=wires) for wires_list in reversed(half_pyramid[:-1]) for wires in wires_list]
+        self._n_wires = n_wires
+
+        wires_list = []
+        for col in range(2, n_wires):
+            if 2 * (col - 1) + 1 < n_wires:
+                wires_list += [[2 * i, 2 * i + 1] for i in range(col - 1)]
+            if 2 * (col - 1) + 2 < n_wires:
+                wires_list += [[2 * i + 1, 2 * i + 2] for i in range(col - 1)]
+
+        wires_list += list(reversed(wires_list[:-1]))
+        self._rbs_list = [RBS(wires=wires) for wires in wires_list]
 
     def forward(self, qdev):
         for rbs in self._rbs_list:
             rbs(qdev)
+
+    def __repr__(self):
+        return f'PyramidDense(n_wires={self._n_wires})'
