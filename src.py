@@ -1,12 +1,18 @@
-from torchquantum import QuantumModule, QuantumDevice
-from torchquantum.encoding import Encoder
 import torch
 import torch.nn as nn
+
 import numpy as np
+from scipy.special import comb
+from itertools import combinations
+
+from torchquantum import QuantumModule, QuantumDevice, measure
+from torchquantum.encoding import Encoder
 
 class OneHotAmplitude(Encoder):
     """
     Encodes 2D data using one-hot amplitude encoding
+
+    :param dims: Image dimensions.
     """
     def __init__(self, dims):
         super().__init__()
@@ -64,8 +70,8 @@ class RBS(QuantumModule):
     """ 
     Reconfigurable Beam splitter
 
-    :param theta: Angle in
-    :param wires: wires to apply RBS
+    :param theta: RBS gate angle.
+    :param wires: wires to apply the RBS between.
     """
     def __init__(self, theta = None, wires = None):
         super().__init__()
@@ -187,6 +193,7 @@ class Pooling(QuantumModule):
     Reduces the dimension of the image by applying a succession of CNOT gates
     and discarding the control qubits.
 
+    :param dims: Image dimensinos.
     :param kernel_size: Dimension by which the image is reduced.
     """
     def __init__(self, dims: tuple[int], kernel_size: int | tuple[int] = 2):
@@ -269,3 +276,45 @@ class PyramidDense(QuantumModule):
 
     def __repr__(self):
         return f'PyramidDense(n_wires={self._n_wires})'
+
+
+class MeasureLayer(torch.nn.Module):
+    """ 
+    Measures the quantum device and outputs the results as a layer.
+
+    :param n_wires: Subset of qubits to be measured.
+    """
+    def __init__(self, n_wires, n_shots = None):
+        super().__init__()
+
+        self._n_wires = n_wires
+        self._n_shots = n_shots if n_shots is not None else 1024 
+
+        self._all_measurements = list(self._generate_all_measurements())
+
+
+    def forward(self, qdev):
+        results = measure(qdev, n_shots=self._n_shots)
+        output = torch.zeros(len(results), int(comb(self._n_wires, 2)))
+
+        indices = {key: i for i, key in enumerate(self._all_measurements)}
+
+        for i, res in enumerate(results):
+            for key, count in res.items():
+                trimmed_key = key[:self._n_wires]
+                if trimmed_key in self._all_measurements:
+                    output[i][indices[trimmed_key]] += count
+        return output
+    
+    def _generate_all_measurements(self):
+        """Generate all possible bit strings with two 1s."""
+        if self._n_wires < 2:
+            return
+        for i, j in combinations(range(self._n_wires), 2):
+            bit_string = ['0'] * self._n_wires
+            bit_string[i] = '1'
+            bit_string[j] = '1'
+            yield ''.join(bit_string)
+    
+    def __repr__(self):
+        return f"Measure(n_wires={self._n_wires})"
