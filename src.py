@@ -199,49 +199,33 @@ class Pooling(QuantumModule):
     def __init__(self, dims: tuple[int], kernel_size: int | tuple[int] = 2):
         super().__init__()
 
+        self._dims = dims
         if isinstance(kernel_size, int):
             self._kernel_size = (kernel_size, kernel_size)
         else:
             self._kernel_size = kernel_size
 
-        self._dims = dims
-
         if (dims[0] % self._kernel_size[0]) or (dims[1] % self._kernel_size[1]):
             raise ValueError("The dimension of the image should be divisible by the kernel size.")
         
-        # The following permutation arranges the control qubits to the bottom of the register and
-        # the target qubits to the top.
-        _perm = []
-        _keep, _bin = 0, dims[0] // self._kernel_size[0] + dims[1] // self._kernel_size[1]
-        for d, k in zip(dims, self._kernel_size):
-            for i in range(d):
-                _perm.append(_keep if i % k == 0 else _bin)
-                _keep += i % k == 0
-                _bin += i % k != 0
-
-        self._perm_u = np.zeros((2 ** sum(dims), 2 ** sum(dims)), dtype=np.int16)
-
-        for i in range(2 ** sum(dims)):
-            bit_string = format(i, f'0{sum(dims)}b')
-            j = int(''.join(bit_string[_perm[j]] for j in range(sum(dims))), 2)
-            self._perm_u[j, i] = 1
-
+        # The following permutation arranges the control qubits to the bottom of the register and target qubits to the top
+        self._swaps = [[i, self._kernel_size[0] * i] for i in range(1, dims[0] // self._kernel_size[0])]
+        self._swaps += [[dims[0] // self._kernel_size[0] + i, dims[0] + self._kernel_size[1] * i] for i in range(dims[1] // self._kernel_size[1])]
 
     def forward(self, qdev):
         # Pool X register
         for pool in reversed(range(self._dims[0] // self._kernel_size[0])):
             for i in range(self._kernel_size[0] - 1):
-                qdev.cx([pool + i, pool + i + 1])
+                qdev.cx([pool + i + 1, pool + i])
 
         # Pool Y register
         for pool in reversed(range(self._dims[1] // self._kernel_size[1])):
             for i in range(self._kernel_size[1] - 1):
-                qdev.cx([pool + i, pool + i + 1])
+                qdev.cx([pool + i + 1, pool + i])
 
-        qdev.qubitunitary(
-            wires=[*range(sum(self._dims))], 
-            params=torch.tensor(self._perm_u)
-        )
+        # Drop control qubits to bottom of register
+        for swap in self._swaps:
+            qdev.swap(swap)
 
     def __repr__(self):
         return f'Pooling(dims={self._dims}, kernel_size={self._kernel_size})'
