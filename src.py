@@ -208,20 +208,32 @@ class Pooling(QuantumModule):
         if (dims[0] % self._kernel_size[0]) or (dims[1] % self._kernel_size[1]):
             raise ValueError("The dimension of the image should be divisible by the kernel size.")
         
+        # Determine wires in each register to perform CNOT gates
+        registerX, registerY = list(range(dims[0])), list(range(dims[0], dims[0] + dims[1]))
+
+        self._registerX_pooled = [
+            registerX[i:i + kernel_size][::-1]
+            for i in range(0, len(registerX), kernel_size)
+        ]
+        self._registerY_pooled = [
+            registerY[i:i + kernel_size][::-1]
+            for i in range(0, len(registerY), kernel_size)
+        ]
+        
         # The following permutation arranges the control qubits to the bottom of the register and target qubits to the top
         self._swaps = [[i, self._kernel_size[0] * i] for i in range(1, dims[0] // self._kernel_size[0])]
         self._swaps += [[dims[0] // self._kernel_size[0] + i, dims[0] + self._kernel_size[1] * i] for i in range(dims[1] // self._kernel_size[1])]
 
     def forward(self, qdev):
         # Pool X register
-        for pool in reversed(range(self._dims[0] // self._kernel_size[0])):
-            for i in range(self._kernel_size[0] - 1):
-                qdev.cx([pool + i + 1, pool + i])
+        for pool in reversed(self._registerX_pooled):
+            for i in range(len(pool) - 1):
+                qdev.cx([pool[i], pool[i + 1]])
 
         # Pool Y register
-        for pool in reversed(range(self._dims[1] // self._kernel_size[1])):
-            for i in range(self._kernel_size[1] - 1):
-                qdev.cx([pool + i + 1, pool + i])
+        for pool in reversed(self._registerY_pooled):
+            for i in range(len(pool) - 1):
+                qdev.cx([pool[i], pool[i + 1]])
 
         # Drop control qubits to bottom of register
         for swap in self._swaps:
