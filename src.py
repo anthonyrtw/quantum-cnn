@@ -5,7 +5,7 @@ import numpy as np
 from scipy.special import comb
 from itertools import combinations
 
-from torchquantum import QuantumModule, QuantumDevice, measure
+from torchquantum import QuantumModule, QuantumDevice, partial_trace, matrix_form
 from torchquantum.encoding import Encoder
 
 class OneHotAmplitude(Encoder):
@@ -281,37 +281,39 @@ class MeasureLayer(torch.nn.Module):
 
     :param n_wires: Subset of qubits to be measured.
     """
-    def __init__(self, n_wires, n_shots = None):
+    def __init__(self, n_wires):
         super().__init__()
 
-        self.n_wires = n_wires
-        self.n_shots = n_shots if n_shots is not None else 1024 
-
-        self._all_measurements = list(self._generate_all_measurements())
-
+        self._n_wires = n_wires
+        self._mask = (list(self._generate_mask()))
 
     def forward(self, qdev):
-        results = measure(qdev, n_shots=self.n_shots)
-        output = torch.zeros(len(results), int(comb(self.n_wires, 2)))
+        density_matrix = matrix_form(partial_trace(qdev, keep_indices=list(range(self._n_wires))))
+        
+        results = density_matrix.diagonal(dim1=1, dim2=2)
+        filtered_results = torch.abs(results[:, self._mask])
 
-        indices = {key: i for i, key in enumerate(self._all_measurements)}
+        return filtered_results
 
-        for i, res in enumerate(results):
-            for key, count in res.items():
-                trimmed_key = key[:self.n_wires]
-                if trimmed_key in self._all_measurements:
-                    output[i][indices[trimmed_key]] += count
-        return output
-    
-    def _generate_all_measurements(self):
+    def output_states(self):
         """Generate all possible bit strings with two 1s."""
-        if self.n_wires < 2:
+        if self._n_wires < 2:
             return
-        for i, j in combinations(range(self.n_wires), 2):
-            bit_string = ['0'] * self.n_wires
+        for i, j in combinations(range(self._n_wires), 2):
+            bit_string = ['0'] * self._n_wires
             bit_string[i] = '1'
             bit_string[j] = '1'
             yield ''.join(bit_string)
-    
+
+    def _generate_mask(self):
+        """Generates mask that filters states with hamming weights
+        not equal to 2."""
+        for i in range(2 ** self._n_wires):
+            bit_string = format(i, f'0{self._n_wires}b')
+            if bit_string.count('1') == 2:
+                yield True
+            else:
+                yield False
+
     def __repr__(self):
-        return f"Measure(n_wires={self.n_wires})"
+        return f"Measure(n_wires={self._n_wires})"
