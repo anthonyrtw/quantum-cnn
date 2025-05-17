@@ -1,0 +1,5 @@
+matplotlib==3.10.3
+numpy==2.2.5
+torch==2.5.1
+torchquantum.egg==info
+torchvision==0.20.1
